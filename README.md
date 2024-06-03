@@ -3,7 +3,7 @@
  
  When looking at pulseview on certain GPIO's that are allocated to certain 'bits' of each 3 bytes that are clocked out in parallel, you will see:
  
- ![Output](pulseview_SiRi5owMda.jpg)
+ ![Output](pulseview_SiRi5owMda.png)
 
 This is an arbitrary output as a result of:
 ```
