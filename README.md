@@ -41,3 +41,6 @@ The GPIO to 'bit position' mapping for this example is as follows for testing:
   bus_cfg.pin_d22 = -1;          
   bus_cfg.pin_d23 = GPIO_NUM_34;  // end of third byte
 ```
+## Constraints
+
+I cannot get this working at all when the data buffer is in PSRAM. Only works for SRAM (internal).
