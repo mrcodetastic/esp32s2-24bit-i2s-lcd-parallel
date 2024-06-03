@@ -7,9 +7,9 @@
 
 This is an arbitrary output as a result of:
 ```
-      global_buffer[75] = 0b1; // byte 1
-      global_buffer[76] = 0b01000000; // byte 2
-      global_buffer[77] = 0xff; // byte 3
+      global_buffer[75] = 0b1; // byte 1 (d0)
+      global_buffer[76] = 0b01000000; // byte 2 (d14)
+      global_buffer[77] = 0xff; // byte 3 (d15 and d16 as they're the only bits mapped to a GPIO)
 ```
 
 Refer to `esp32s2_i2s_lcd_parallel_dma.cpp`
