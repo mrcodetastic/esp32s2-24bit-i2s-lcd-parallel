@@ -4,19 +4,20 @@
   #pragma error "Designed only for ESP32-S2"
 #endif
 
-
-#include "esp32s2_i2s_lcd_parallel_dma.hpp"
-
+#include "esp32s2_i2s_lcd_24bit_parallel_dma.hpp"
+#include "mbi_gclk_addr_data.h"
+  
 
 #include <driver/gpio.h>
 #if (ESP_IDF_VERSION_MAJOR == 5)
 #include <esp_private/periph_ctrl.h>
 #else
-#include <driver/periph_ctrl.h>
+// Break the compile 
+DO NOT COMPILE
 #endif
+
 #include <soc/gpio_sig_map.h>
 #include <soc/i2s_periph.h> //includes struct and reg
-
 
 #if defined (ARDUINO_ARCH_ESP32)
 #include <Arduino.h>
@@ -27,15 +28,21 @@
 
 // Get CPU freq function.
 #include <soc/rtc.h>
+#include <rom/ets_sys.h> // ets delay
+
+// New dma helper tools
+#include "esp_dma_utils.h"
+#include "rom/cache.h"
+
+#define ESP32_I2S_DEVICE I2S_NUM_0	
 
   static const char *TAG = "edma_lcd_test";
 
   extern DMA_DATA_TYPE *global_buffer;
   extern lldesc_t *dma_ll;
 
-
-  // Static
-  i2s_dev_t* getDev() {
+  // Static I2S0
+  static i2s_dev_t* getDev() {
       return &I2S0;
   }
 
@@ -65,7 +72,7 @@
   }
 
 
-  static lldesc_t * allocate_dma_descriptors_gb(uint32_t count, uint16_t payload_size, DMA_DATA_TYPE *buffer)
+  static lldesc_t * allocate_dma_descriptors_gb(uint32_t count, size_t payload_size, DMA_DATA_TYPE *buffer)
   {
       lldesc_t *dma = (lldesc_t *)heap_caps_malloc(count * sizeof(lldesc_t), MALLOC_CAP_DMA);
       if (dma == NULL) {
@@ -145,13 +152,13 @@
       auto dev = getDev();
       volatile int iomux_signal_base;
       volatile int iomux_clock;
-      int irq_source;
+    //  int irq_source;
 
       periph_module_reset(PERIPH_I2S0_MODULE);
       periph_module_enable(PERIPH_I2S0_MODULE);
 
       iomux_clock = I2S0O_WS_OUT_IDX;
-      irq_source = ETS_I2S0_INTR_SOURCE;
+    //  irq_source = ETS_I2S0_INTR_SOURCE;
 
       if ( _cfg.parallel_width == 24)
       {
@@ -189,15 +196,16 @@
 
       ////////////////////////////// Clock configuration //////////////////////////////
       // Code borrowed from: https://github.com/espressif/esp-iot-solution/blob/master/components/bus/i2s_lcd_esp32s2_driver.c
-      unsigned int _div_num = (unsigned int) (160000000L / _cfg.bus_freq / i2s_parallel_get_memory_width(ESP32_I2S_DEVICE, bus_width));       
+      //unsigned int _div_num = (unsigned int) (160000000L / _cfg.bus_freq / i2s_parallel_get_memory_width(ESP32_I2S_DEVICE, bus_width));       
 
-      ESP_LOGI(TAG, "Clock divider is: %d", _div_num);
 
       // Configure the clock
       dev->clkm_conf.val = 0;
-      //dev->clkm_conf.clkm_div_num = 2; // 160MHz / 2 = 80MHz
+      dev->clkm_conf.clkm_div_num = 40; // 4mhz
+      //dev->clkm_conf.clkm_div_num = 20; // 8mhz
+      ESP_LOGI(TAG, "Clock divider is: %d", (dev->clkm_conf.clkm_div_num));
 
-      dev->clkm_conf.clkm_div_num = _div_num; 
+
       dev->clkm_conf.clkm_div_b = 0;
       dev->clkm_conf.clkm_div_a = 63;
       dev->clkm_conf.clk_sel = 2;
@@ -205,7 +213,7 @@
 
       // Configure sampling rate
       //dev->sample_rate_conf.tx_bck_div_num = 40000000 / 2000000; // Fws = Fbck / 2
-      dev->sample_rate_conf.tx_bck_div_num = 4;
+      dev->sample_rate_conf.tx_bck_div_num = 2;
       dev->sample_rate_conf.tx_bits_mod = _cfg.parallel_width;
 
       dev->timing.val = 0;
@@ -218,8 +226,8 @@
 
       // Configuration data format
       dev->conf.val = 0;
-      dev->conf.tx_right_first = 1;
-      dev->conf.tx_msb_right = 1;
+     // dev->conf.tx_right_first = 1; // doesn't change anything if 0
+     // dev->conf.tx_msb_right = 1;   // doesn't change anything if 0
       dev->conf.tx_dma_equal = 1;
 
       dev->conf1.tx_pcm_bypass = 1;
@@ -231,7 +239,7 @@
 
       // Not requried for S2?
       dev->fifo_conf.tx_fifo_mod_force_en = 1;       
-      dev->fifo_conf.tx_fifo_mod = 1;      
+      //dev->fifo_conf.tx_fifo_mod = 1;   // doesn't seem to change anything if 0
       dev->conf_chan.tx_chan_mod = 0;//remove
 
 
@@ -246,94 +254,106 @@
 
 
   // VERSION 2!
-  esp_err_t dma_allocate_v2(config_t& _cfg)
+  esp_err_t dma_allocate_v3(config_t& _cfg)
   {
       // The framebuffer / payload size needs to match the size of the parallel_wifth!
-      size_t fb_size  = 2000; // 16 bit / 2 byte mode
+      
+      /* 80 columns * 20 rows * 16 bits per pixel color chain * 3 bytes in parallel clocked out */
+      // 64k bits in parallel / 3 byte mode
 
-      fb_size *= (_cfg.parallel_width/8);
+      // 1) To send a full frame of GCLK data it is 41040 bits in length (times by three (3) for the dma output size)
+      // 2) To send a 80x80 frame of MBI colour data it's 25600 bits
+      // We need some blank space after this for dead time etc. So lets say 44,000 bits length (or 132,000 bytes needed) to play with.
+      size_t alloc_size  = 44000 * 3; // Up to 44,000  pulses of 24 bits in parallel.
+      size_t actual_size = 0;
+      
+     // void *tmp_buf = NULL;
+      esp_err_t err = esp_dma_malloc(alloc_size, ESP_DMA_MALLOC_FLAG_PSRAM, (void **) &global_buffer, &actual_size);
+      assert(err == ESP_OK);
 
-      // fb caps
-      int dma_align = ll_cam_get_dma_align();
+      size_t alignment_offset = actual_size - alloc_size;      
 
-      /* Allocate memory for frame buffer */
-      size_t alloc_size = fb_size * sizeof(DMA_DATA_TYPE) + dma_align;
+      ESP_LOGI(TAG, "Actual size is: %d bytes", actual_size);  
 
-      //uint32_t _caps = MALLOC_CAP_SPIRAM;
-      uint32_t _caps = MALLOC_CAP_INTERNAL  | MALLOC_CAP_DMA;
-
-  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 3, 0)
-          // In IDF v4.2 and earlier, memory returned by heap_caps_aligned_alloc must be freed using heap_caps_aligned_free.
-          // And heap_caps_aligned_free is deprecated on v4.3.
-          global_buffer = (DMA_DATA_TYPE *)heap_caps_aligned_alloc(dma_align, alloc_size, _caps);
-  #else
-          global_buffer = (DMA_DATA_TYPE *)heap_caps_malloc(alloc_size, _caps);
-  #endif
+      ESP_LOGI(TAG, "Alignment offset is: %d ", alignment_offset);        
 
       if (global_buffer == NULL)  {
-              ESP_LOGE(TAG, "xxxx Frame buffer malloc failed.");
+              ESP_LOGE(TAG, "Frame buffer malloc failed.");
       } 
 
-      memset(global_buffer, 0, alloc_size); // zero it.
+      // Zero out
+      memset(global_buffer, 0b00000000, alloc_size); // zero it.      
+      Cache_WriteBack_Addr((uint32_t) global_buffer, alloc_size);   
+
+      /************** WORKING TEST ****************/
+      /*
+      // Creates a waterfall across d0, d8, d16 outputs
+      // Zero out
+      memset(global_buffer, 0b00000000, alloc_size); // zero it.      
+      Cache_WriteBack_Addr((uint32_t) global_buffer, alloc_size);      
+
+      // Output bits 0b000000000000000000000110 of first 24bit 'clock of data'
+      // First byte of data
+      memset(&global_buffer[0], 0b00000001, 1); // zero it.
+   //   Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
+
+      // Send byte, second pulse
+      // This causes the first byte to be two pulses? WTF??
+   //   memset(&global_buffer[5], 0b00000001, 1); // zero it.
+    // Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
+
+
+      memset(&global_buffer[4], 0b00000001, 1); // test
+
+
+      // Output bit 0b000000010000000000000000 of first 24bit 'clock of data'
+      // Third byte of second 'clock' of data (byte 6 of what's in memory)
+      memset(&global_buffer[8], 0b00000001, 1); // zero it.
+      Cache_WriteBack_Addr((uint32_t) &global_buffer[0], 64);      
+      */
+
+    /************************************************* */
+    /*
+      // Creates a waterfall across d0, d8, d16 outputs
+      // Output bits 0b000000000000000000000110 of first 24bit 'clock of data'
+      // First byte of data
+      memset(&global_buffer[0], 0b00000001, 1); // zero it.
+   //   Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
+      memset(&global_buffer[3], 0b00000001, 1); // zero it.
+      // Send byte, second pulse
+      // This causes the first byte to be two pulses? WTF??
+   //   memset(&global_buffer[5], 0b00000001, 1); // zero it.
+    // Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
+
+      memset(&global_buffer[4], 0b00000001, 1); // test
+
+      // Output bit 0b000000010000000000000000 of first 24bit 'clock of data'
+      // Third byte of second 'clock' of data (byte 6 of what's in memory)
+      memset(&global_buffer[8], 0b00000011, 1); // zero it.
+      Cache_WriteBack_Addr((uint32_t) &global_buffer[0], 64);      
+
+      */
+
+       for (int i = 0; i < sizeof(dma_gclk_addr_data); i++) {
+          memset(&global_buffer[i*3], dma_gclk_addr_data[i], 1); // test    
+          Cache_WriteBack_Addr((uint32_t) &global_buffer[i*3], 1);     
+
+       }
+ 
 
       ESP_LOGI(TAG, "Global Buffer Addr: 0x%08X", (uintptr_t) global_buffer);
 
-      // fb offset
-      size_t fb_offset = dma_align - ((uintptr_t)global_buffer & (dma_align - 1));
-      //global_buffer += fb_offset; // increment pointer
-      ESP_LOGI(TAG, "Global Buffer: Offset: %u, Addr: 0x%08X", fb_offset, (uintptr_t) global_buffer);
-
       // dma ll desc
-      int dma_node_cnt = ll_desc_get_required_num(fb_size); // Number of DMA nodes  8000 / 4092
-
-      global_buffer += fb_offset; // increment pointer
-
-      ESP_LOGI(TAG, "Global Buffer Addr (aligned): 0x%08X", (uintptr_t) global_buffer);
+      int dma_node_cnt = ll_desc_get_required_num(alloc_size); // Number of DMA nodes  8000 / 4092
+      dma_ll =  allocate_dma_descriptors_gb(dma_node_cnt, alloc_size, global_buffer);
 
 
-      dma_ll =  allocate_dma_descriptors_gb(dma_node_cnt, fb_size, global_buffer); 
+      // This doesn't work.
+      // ESP_ERROR_CHECK(esp_cache_msync(&global_buffer[0], alloc_size-100, ESP_CACHE_MSYNC_FLAG_INVALIDATE | ESP_CACHE_MSYNC_FLAG_UNALIGNED));
 
-      // Pattern Length.          
-    
-    /*
-      for (int i = 0; i < fb_size; i++) {
-        // 17 bits
-        global_buffer[i] = (i%21) ? 0b0000000000000000:0xffff; //0b1000000100000010;
-      }
-      */
-
-      global_buffer[75] = 0b1; // byte 1
-      global_buffer[76] = 0b01000000; // byte 2
-      global_buffer[77] = 0xff; // byte 3
-      
-/*
-      int val = 0;
-      for (int i = 0; i < (fb_size-3); i +=3) {
-        // 17 bits
-        val = !val;
-        global_buffer[i]   = (val) ? 0:1; //0b1000000100000010;
-        //global_buffer[i+1] = (val) ? 0:0; //0b1000000100000010;
-        //global_buffer[i+2] = (val) ? 0:0; //0b1000000100000010;                        
-      }     
-  */    
-      /* 
-      uint8_t pattern[] = {0b00, 0b11, 0b11, 0b11};
-      int pattern_length   = sizeof(pattern);
-      ESP_LOGI(TAG, "Pattern length is %d bytes", pattern_length);
-
-      // Fill memory with repeating pattern
-        size_t filled_bytes = 0;
-        while (filled_bytes < fb_size) {
-            size_t remaining_bytes = fb_size - filled_bytes;
-            size_t bytes_to_copy = remaining_bytes < pattern_length ? remaining_bytes : pattern_length;
-           // memcpy( (global_buffer + filled_bytes), pattern, bytes_to_copy);
-            filled_bytes += bytes_to_copy;
-        }     
-      */
       return ESP_OK;
 
   } // dma_allocate
-
 
 
     esp_err_t dma_start_v2()
@@ -359,48 +379,3 @@
 
     } // end 
     
-
-  /*
-    // from ll_cam.c in the esp32-camera example
-    
-    I2S0.rx_eof_num = cam->dma_half_buffer_size; // Ping pong operation
-      if (!cam->psram_mode) {
-          I2S0.in_link.addr = ((uint32_t)&cam->dma[0]) & 0xfffff;
-      } else {
-          I2S0.in_link.addr = ((uint32_t)&cam->frames[frame_pos].dma[0]) & 0xfffff;
-      }
-  */
-
-
-  /*
-
-  void IRAM_ATTR spicommon_dma_desc_setup_link(spi_dma_desc_t *dmadesc, const void *data, int len, bool is_rx)
-  {
-      dmadesc = ADDR_DMA_2_CPU(dmadesc);
-      int n = 0;
-      while (len) {
-          int dmachunklen = len;
-          if (dmachunklen > DMA_DESCRIPTOR_BUFFER_MAX_SIZE_4B_ALIGNED) {
-              dmachunklen = DMA_DESCRIPTOR_BUFFER_MAX_SIZE_4B_ALIGNED;
-          }
-          if (is_rx) {
-              //Receive needs DMA length rounded to next 32-bit boundary
-              dmadesc[n].dw0.size = (dmachunklen + 3) & (~3);
-          } else {
-              dmadesc[n].dw0.size = dmachunklen;
-              dmadesc[n].dw0.length = dmachunklen;
-          }
-          dmadesc[n].buffer = (uint8_t *)data;
-          dmadesc[n].dw0.suc_eof = 0;
-          dmadesc[n].dw0.owner = DMA_DESCRIPTOR_BUFFER_OWNER_DMA;
-          dmadesc[n].next = ADDR_CPU_2_DMA(&dmadesc[n + 1]);
-          len -= dmachunklen;
-          data += dmachunklen;
-          n++;
-      }
-      dmadesc[n - 1].dw0.suc_eof = 1; //Mark last DMA desc as end of stream.
-      dmadesc[n - 1].next = NULL;
-  }
-
-
-  */

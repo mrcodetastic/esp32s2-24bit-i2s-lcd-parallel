@@ -1,46 +1,53 @@
-# esp32s2-24bit-i2s-lcd-parallel
- Example of sending 24 bits in parallel using ESP32S2 I2S LCD interface
- 
- When looking at pulseview on certain GPIO's that are allocated to certain 'bits' of each 3 bytes that are clocked out in parallel, you will see:
- 
- ![Output](pulseview_SiRi5owMda.png)
+| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C6 | ESP32-H2 | ESP32-P4 | ESP32-S2 | ESP32-S3 | Linux |
+| ----------------- | ----- | -------- | -------- | -------- | -------- | -------- | -------- | -------- | ----- |
 
-This is an arbitrary output as a result of:
+# Hello World Example
+
+Starts a FreeRTOS task to print "Hello World".
+
+(See the README.md file in the upper level 'examples' directory for more information about examples.)
+
+## How to use example
+
+Follow detailed instructions provided specifically for this example.
+
+Select the instructions depending on Espressif chip installed on your development board:
+
+- [ESP32 Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/stable/get-started/index.html)
+- [ESP32-S2 Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/get-started/index.html)
+
+
+## Example folder contents
+
+The project **hello_world** contains one source file in C language [hello_world_main.c](main/hello_world_main.c). The file is located in folder [main](main).
+
+ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt` files that provide set of directives and instructions describing the project's source files and targets (executable, library, or both).
+
+Below is short explanation of remaining files in the project folder.
+
 ```
-      global_buffer[75] = 0b1; // byte 1 (d0)
-      global_buffer[76] = 0b01000000; // byte 2 (d14)
-      global_buffer[77] = 0xff; // byte 3 (d15 and d16 as they're the only bits mapped to a GPIO)
+├── CMakeLists.txt
+├── pytest_hello_world.py      Python script used for automated testing
+├── main
+│   ├── CMakeLists.txt
+│   └── hello_world_main.c
+└── README.md                  This is the file you are currently reading
 ```
 
-Refer to `esp32s2_i2s_lcd_parallel_dma.cpp`
+For more information on structure and contents of ESP-IDF projects, please refer to Section [Build System](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html) of the ESP-IDF Programming Guide.
 
-The GPIO to 'bit position' mapping for this example is as follows for testing:
-```
-  bus_cfg.pin_d0 = GPIO_NUM_40;
-  bus_cfg.pin_d1 = GPIO_NUM_37;
-  bus_cfg.pin_d2 = -1;
-  bus_cfg.pin_d3 = -1;
-  bus_cfg.pin_d4 = -1;
-  bus_cfg.pin_d5 = -1; // blue
-  bus_cfg.pin_d6 = -1;
-  bus_cfg.pin_d7 = -1;
-  bus_cfg.pin_d8 = GPIO_NUM_38; // start of second byte
-  bus_cfg.pin_d9 = -1;
-  bus_cfg.pin_d10 = -1;
-  bus_cfg.pin_d11 = -1;
-  bus_cfg.pin_d12 = -1;
-  bus_cfg.pin_d13 = -1;
-  bus_cfg.pin_d14 = GPIO_NUM_35;  
-  bus_cfg.pin_d15 = GPIO_NUM_36; // end of byte 2
-  bus_cfg.pin_d16 = GPIO_NUM_33; // start of third byte
-  bus_cfg.pin_d17 = -1;
-  bus_cfg.pin_d18 = -1;
-  bus_cfg.pin_d19 = -1;
-  bus_cfg.pin_d20 = -1;      
-  bus_cfg.pin_d21 = -1;        
-  bus_cfg.pin_d22 = -1;          
-  bus_cfg.pin_d23 = GPIO_NUM_34;  // end of third byte
-```
-## Constraints
+## Troubleshooting
 
-I cannot get this working at all when the data buffer is in PSRAM. Only works for SRAM (internal).
+* Program upload failure
+
+    * Hardware connection is not correct: run `idf.py -p PORT monitor`, and reboot your board to see if there are any output logs.
+    * The baud rate for downloading is too high: lower your baud rate in the `menuconfig` menu, and try again.
+
+## Technical support and feedback
+
+Please use the following feedback channels:
+
+* For technical queries, go to the [esp32.com](https://esp32.com/) forum
+* For a feature request or bug report, create a [GitHub issue](https://github.com/espressif/esp-idf/issues)
+
+We will get back to you as soon as possible.
