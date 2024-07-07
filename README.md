@@ -4,7 +4,7 @@
 # ESP32-S2 24bit LCD DMA using PSRAM
 This is an example of outputting 24bits of data in parallel from PSRAM / SPIRAM via the LCD interface.
 
-This esp-idf sketch has been written for the ESP32-S2 only.
+This esp-idf sketch has been written for the ESP32-S2 only. Specifically the WeMost [ESP32-S2 Mini, or equivalent clones](https://www.wemos.cc/en/latest/s2/s2_mini.html). 
 
 ## How does this work?
 The biggest issue with using PSRAM is "cache coheriency" or something to do with the fact that there's a buffer between the CPU and the PSRAM when writing to it, but NOT when reading from it via DMA.
