@@ -1,7 +1,7 @@
 | Supported Targets |  ESP32-S2 |
 | ----------------- |  -------- | 
 
-# ESP32-S2 24bit LCD DMA using PSRAM
+# ESP32-S2 24bit LCD DMA output from PSRAM
 This is an example of outputting 24bits of data in parallel from PSRAM / SPIRAM via the LCD interface.
 
 This esp-idf sketch has been written for the ESP32-S2 only. Specifically the WeMost [ESP32-S2 Mini, or equivalent clones](https://www.wemos.cc/en/latest/s2/s2_mini.html). 
