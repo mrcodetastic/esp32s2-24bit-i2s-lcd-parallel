@@ -5,8 +5,6 @@
 #endif
 
 #include "esp32s2_i2s_lcd_24bit_parallel_dma.hpp"
-#include "mbi_gclk_addr_data.h"
-  
 
 #include <driver/gpio.h>
 #if (ESP_IDF_VERSION_MAJOR == 5)
@@ -34,12 +32,19 @@ DO NOT COMPILE
 #include "esp_dma_utils.h"
 #include "rom/cache.h"
 
+/**************************************************************/
+
 #define ESP32_I2S_DEVICE I2S_NUM_0	
 
-  static const char *TAG = "edma_lcd_test";
+static const char *TAG = "edma_lcd_test";
 
-  extern DMA_DATA_TYPE *global_buffer;
-  extern lldesc_t *dma_ll;
+/**************************************************************/
+  
+  extern DMA_DATA_TYPE *parallel_out_buffer;
+
+/**************************************************************/
+
+  static lldesc_t *dma_ll;
 
   // Static I2S0
   static i2s_dev_t* getDev() {
@@ -70,7 +75,6 @@ DO NOT COMPILE
       return -ESP_ERR_INVALID_ARG;
     }
   }
-
 
   static lldesc_t * allocate_dma_descriptors_gb(uint32_t count, size_t payload_size, DMA_DATA_TYPE *buffer)
   {
@@ -123,21 +127,6 @@ DO NOT COMPILE
       return dma;
   }
 
-
-  static int ll_cam_get_dma_align()
-  {
-      ESP_LOGD("ll_cam_get_dma_align()", "ext_mem_bk_size val is %d", I2S0.lc_conf.ext_mem_bk_size);         
-
-      //return 16; //16 << I2S0.lc_conf.ext_mem_bk_size;   
-      //return 64;//16 << I2S0.lc_conf.ext_mem_bk_size;   
-      //return 1024; //16 << I2S0.lc_conf.ext_mem_bk_size;    
-
-      //return 32;
-      //return 64;
-      return 16;
-  }
-
-
   static int ll_desc_get_required_num(uint32_t bytes_len)
   {
       int ll_desc_required = (bytes_len + DMA_MAX - 1) / DMA_MAX;
@@ -146,8 +135,7 @@ DO NOT COMPILE
       return ll_desc_required;
   }
 
-
-  esp_err_t i2s_lcd_setup_v2(config_t& _cfg) // The big one that gets everything setup.
+  esp_err_t i2s_lcd_setup(config_t& _cfg) // The big one that gets everything setup.
   {
       auto dev = getDev();
       volatile int iomux_signal_base;
@@ -252,130 +240,58 @@ DO NOT COMPILE
       return ESP_OK;
     }
 
-
-  // VERSION 2!
-  esp_err_t dma_allocate_v3(config_t& _cfg)
+  esp_err_t dma_allocate_memory(size_t payload_size_bytes)
   {
-      // The framebuffer / payload size needs to match the size of the parallel_wifth!
-      
-      /* 80 columns * 20 rows * 16 bits per pixel color chain * 3 bytes in parallel clocked out */
-      // 64k bits in parallel / 3 byte mode
-
-      // 1) To send a full frame of GCLK data it is 41040 bits in length (times by three (3) for the dma output size)
-      // 2) To send a 80x80 frame of MBI colour data it's 25600 bits
-      // We need some blank space after this for dead time etc. So lets say 44,000 bits length (or 132,000 bytes needed) to play with.
-      size_t alloc_size  = 44000 * 3; // Up to 44,000  pulses of 24 bits in parallel.
+      size_t alloc_size  = payload_size_bytes; // Must be multiples of 3bytes if 24bit output.
       size_t actual_size = 0;
       
-     // void *tmp_buf = NULL;
-      esp_err_t err = esp_dma_malloc(alloc_size, ESP_DMA_MALLOC_FLAG_PSRAM, (void **) &global_buffer, &actual_size);
+      // Forced to used PSRAM.
+      // Use heap_caps_malloc() internal + DMA to use SRAM and comment out the Cache_WriteBack_Addr stuff if you don't 
+      // want to use PSRAM
+      esp_err_t err = esp_dma_malloc(alloc_size, ESP_DMA_MALLOC_FLAG_PSRAM, (void **) &parallel_out_buffer, &actual_size);
       assert(err == ESP_OK);
 
       size_t alignment_offset = actual_size - alloc_size;      
 
       ESP_LOGI(TAG, "Actual size is: %d bytes", actual_size);  
-
       ESP_LOGI(TAG, "Alignment offset is: %d ", alignment_offset);        
 
-      if (global_buffer == NULL)  {
-              ESP_LOGE(TAG, "Frame buffer malloc failed.");
+      if (parallel_out_buffer == NULL)  {
+              ESP_LOGE(TAG, "DMA data buffer malloc failed.");
       } 
 
       // Zero out
-      memset(global_buffer, 0b00000000, alloc_size); // zero it.      
-      Cache_WriteBack_Addr((uint32_t) global_buffer, alloc_size);   
-
-      /************** WORKING TEST ****************/
-      /*
-      // Creates a waterfall across d0, d8, d16 outputs
-      // Zero out
-      memset(global_buffer, 0b00000000, alloc_size); // zero it.      
-      Cache_WriteBack_Addr((uint32_t) global_buffer, alloc_size);      
-
-      // Output bits 0b000000000000000000000110 of first 24bit 'clock of data'
-      // First byte of data
-      memset(&global_buffer[0], 0b00000001, 1); // zero it.
-   //   Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
-
-      // Send byte, second pulse
-      // This causes the first byte to be two pulses? WTF??
-   //   memset(&global_buffer[5], 0b00000001, 1); // zero it.
-    // Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
-
-
-      memset(&global_buffer[4], 0b00000001, 1); // test
-
-
-      // Output bit 0b000000010000000000000000 of first 24bit 'clock of data'
-      // Third byte of second 'clock' of data (byte 6 of what's in memory)
-      memset(&global_buffer[8], 0b00000001, 1); // zero it.
-      Cache_WriteBack_Addr((uint32_t) &global_buffer[0], 64);      
-      */
-
-    /************************************************* */
-    /*
-      // Creates a waterfall across d0, d8, d16 outputs
-      // Output bits 0b000000000000000000000110 of first 24bit 'clock of data'
-      // First byte of data
-      memset(&global_buffer[0], 0b00000001, 1); // zero it.
-   //   Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
-      memset(&global_buffer[3], 0b00000001, 1); // zero it.
-      // Send byte, second pulse
-      // This causes the first byte to be two pulses? WTF??
-   //   memset(&global_buffer[5], 0b00000001, 1); // zero it.
-    // Cache_WriteBack_Addr((uint32_t) global_buffer, 16);      
-
-      memset(&global_buffer[4], 0b00000001, 1); // test
-
-      // Output bit 0b000000010000000000000000 of first 24bit 'clock of data'
-      // Third byte of second 'clock' of data (byte 6 of what's in memory)
-      memset(&global_buffer[8], 0b00000011, 1); // zero it.
-      Cache_WriteBack_Addr((uint32_t) &global_buffer[0], 64);      
-
-      */
-
-       for (int i = 0; i < sizeof(dma_gclk_addr_data); i++) {
-          memset(&global_buffer[i*3], dma_gclk_addr_data[i], 1); // test    
-          Cache_WriteBack_Addr((uint32_t) &global_buffer[i*3], 1);     
-
-       }
- 
-
-      ESP_LOGI(TAG, "Global Buffer Addr: 0x%08X", (uintptr_t) global_buffer);
+      memset(parallel_out_buffer, 0b00000000, alloc_size); // zero it.      
+      Cache_WriteBack_Addr((uint32_t) parallel_out_buffer, alloc_size);   
 
       // dma ll desc
       int dma_node_cnt = ll_desc_get_required_num(alloc_size); // Number of DMA nodes  8000 / 4092
-      dma_ll =  allocate_dma_descriptors_gb(dma_node_cnt, alloc_size, global_buffer);
-
-
-      // This doesn't work.
-      // ESP_ERROR_CHECK(esp_cache_msync(&global_buffer[0], alloc_size-100, ESP_CACHE_MSYNC_FLAG_INVALIDATE | ESP_CACHE_MSYNC_FLAG_UNALIGNED));
+      dma_ll =  allocate_dma_descriptors_gb(dma_node_cnt, alloc_size, parallel_out_buffer);
 
       return ESP_OK;
 
   } // dma_allocate
 
 
-    esp_err_t dma_start_v2()
-    {
-      auto dev = getDev();
+    esp_err_t dma_start_output()
+  {
+    auto dev = getDev();
 
-      while (!dev->state.tx_idle);
-      dev->conf.tx_start = 0;
-      dev->conf.tx_reset = 1;
-      dev->conf.tx_reset = 0;
-      dev->conf.tx_fifo_reset = 1;
-      dev->conf.tx_fifo_reset = 0;
-      dev->out_link.addr = ((uint32_t)&dma_ll[0]) & 0xfffff; // ((uint32_t)&frames[0].dma[0]) & 0xfffff; // always frame 0
-      dev->out_link.start = 1;
-      ets_delay_us(1);
-      dev->conf.tx_start = 1;
+    // Configure burst most. Not sure what this actually does.
+    dev->lc_conf.val = I2S_OUT_DATA_BURST_EN | I2S_OUTDSCR_BURST_EN;
 
-    
-      // Configure DMA burst mode
-      //dev->lc_conf.val = I2S_OUT_DATA_BURST_EN | I2S_OUTDSCR_BURST_EN;
+    while (!dev->state.tx_idle);
+    dev->conf.tx_start = 0;
+    dev->conf.tx_reset = 1;
+    dev->conf.tx_reset = 0;
+    dev->conf.tx_fifo_reset = 1;
+    dev->conf.tx_fifo_reset = 0;
+    dev->out_link.addr = ((uint32_t)&dma_ll[0]) & 0xfffff; // ((uint32_t)&frames[0].dma[0]) & 0xfffff; // always frame 0
+    dev->out_link.start = 1;
+    ets_delay_us(1);
+    dev->conf.tx_start = 1;
 
-      return ESP_OK;
+    return ESP_OK;
 
-    } // end 
+  } // end 
     

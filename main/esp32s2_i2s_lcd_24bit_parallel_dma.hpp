@@ -68,11 +68,6 @@
 
 //----------------------------------------------------------------------------
 
-    void IRAM_ATTR irq_hndlr(void* arg);
- 
-    esp_err_t i2s_lcd_setup_v2  (config_t &_cfg);
-
-    esp_err_t dma_allocate_v3   (config_t &_cfg);
-    esp_err_t dma_allocate_v2   (config_t &_cfg);    
-
-    esp_err_t dma_start_v2();
+    esp_err_t i2s_lcd_setup         (config_t &_cfg);
+    esp_err_t dma_allocate_memory   (const size_t payload_size); 
+    esp_err_t dma_start_output      ();

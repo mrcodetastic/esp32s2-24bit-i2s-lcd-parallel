@@ -17,110 +17,48 @@
 #include "rom/cache.h"
 
 #include "esp32s2_i2s_lcd_24bit_parallel_dma.hpp"
-//#include "mbi_gclk_addr_data.h"
-  
-DMA_DATA_TYPE *global_buffer = NULL; // data of stuff
-lldesc_t *dma_ll;
+#include "main.h"
 
-config_t bus_cfg;
-
-
-static const char *TAG = "example";
-
+// Blink LED so we know we're still alive.
+const gpio_num_t ledPin = GPIO_NUM_15;  // 16 corresponds to GPIO15
 static uint8_t s_led_state = 0;
 
-// the number of the LED pin
-const gpio_num_t ledPin = GPIO_NUM_15;  // 16 corresponds to GPIO15
-
-
-TaskHandle_t myTaskHandle = NULL;
-
+// How many parallel clocks of 24 bits of data do we want to send out?
+// Note: The memory/byte size that will be 3x this (3 bytes each time = 24 bites).
+const size_t DMA_PAYLOAD_BITLENGTH = 16000;
 
 static void blink_led(void)
 {
     s_led_state = !s_led_state;
-
-    /* Set the GPIO level according to the state (LOW or HIGH)*/
     gpio_set_level(ledPin, s_led_state);
-
 }
 
 
-void output_task(void *arg)
+void blank_task(void *arg)
 {
-    while (1)
-    {
+    while (1) {
             blink_led();
 
-            /* Print chip information */
-            esp_chip_info_t chip_info;
-            uint32_t flash_size;
-            esp_chip_info(&chip_info);
-            printf("This is %s chip with %d CPU core(s), %s%s%s%s, ",
-                CONFIG_IDF_TARGET,
-                chip_info.cores,
-                (chip_info.features & CHIP_FEATURE_WIFI_BGN) ? "WiFi/" : "",
-                (chip_info.features & CHIP_FEATURE_BT) ? "BT" : "",
-                (chip_info.features & CHIP_FEATURE_BLE) ? "BLE" : "",
-                (chip_info.features & CHIP_FEATURE_IEEE802154) ? ", 802.15.4 (Zigbee/Thread)" : "");
-
-            unsigned major_rev = chip_info.revision / 100;
-            unsigned minor_rev = chip_info.revision % 100;
-            printf("silicon revision v%d.%d, ", major_rev, minor_rev);
-            if(esp_flash_get_size(NULL, &flash_size) != ESP_OK) {
-                printf("Get flash size failed");
-                return;
-            }
-
-            printf("%" PRIu32 "MB %s flash\n", flash_size / (uint32_t)(1024 * 1024),
-                (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
-
-            printf("Minimum free heap size: %" PRIu32 " bytes\n", esp_get_minimum_free_heap_size());
-
             for (int i = 2; i >= 0; i--) {
-                printf("Reprinting in %d seconds...\n", i);
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
             }
-
             fflush(stdout);
-
     }
 
 } // end output_task
 
-
-static void configure_led(void)
-{
-    ESP_LOGI(TAG, "Example configured to blink GPIO LED!");
-    gpio_reset_pin(ledPin);
-
-    /* Set the GPIO as a push/pull output */
-    gpio_set_direction(ledPin, GPIO_MODE_OUTPUT);
+// Function to toggle a specific bit in a byte
+uint8_t toggle_bit(uint8_t byte, int bit) {
+    return byte ^ (1 << bit);
 }
 
-
-void mbi_prepare_data()
-{
-    /*
-    // Firstly load across the pre-calculated gclk stuff   
-    // Global buffer is 
-    for (int i = 0; i < sizeof(dma_gclk_addr_data); i++) {
-
-        // This will happen to be the least significant byte of each 3 bytes sent out at once.
-        // So pin_d0-pin_d7 of the GPIO output
-        int output_d0_d7_byte = i*3 +1;
-
-        //global_buffer[output_d0_d7_byte] = dma_gclk_addr_data[i];         
-       // global_buffer[output_d0_d7_byte] = (i%2 == 0) ?0b1:0b0;         
-        //Cache_WriteBack_Addr((uint32_t) &global_buffer[output_d0_d7_byte], 16);               
-    }
-*/
-
-}
 
 extern "C" void app_main(void)
 {
-    configure_led();
+    static config_t bus_cfg;
+
+    gpio_reset_pin(ledPin);
+    gpio_set_direction(ledPin, GPIO_MODE_OUTPUT);
     blink_led();    
 
     for (int delaysec = 4; delaysec > 0; delaysec--)
@@ -129,9 +67,7 @@ extern "C" void app_main(void)
       ESP_LOGI("I2S-DMA", "Starting in %d...", delaysec);
     }
     
-    printf("Hello world!\n");
-
-    xTaskCreate(output_task, "Output_Task", 4096, NULL, 10, &myTaskHandle);
+    xTaskCreate(blank_task, "LedBlinkTask", 4096, NULL, 10, &myTaskHandle);
 
 
     bus_cfg.bus_freq = 2*1000*1000;
@@ -140,35 +76,120 @@ extern "C" void app_main(void)
     bus_cfg.pin_wr      = GPIO_NUM_39; 
     bus_cfg.invert_pclk = false;
 
-    bus_cfg.pin_d0 = GPIO_NUM_40;
-    bus_cfg.pin_d1 = GPIO_NUM_18;
-    bus_cfg.pin_d2 = -1;
-    bus_cfg.pin_d3 = -1;
-    bus_cfg.pin_d4 = -1;
-    bus_cfg.pin_d5 = GPIO_NUM_38; // blue
-    bus_cfg.pin_d6 = -1;
-    bus_cfg.pin_d7 = -1;
-    bus_cfg.pin_d8 = -1; // start of second byte
-    bus_cfg.pin_d9 = -1;
-    bus_cfg.pin_d10 = -1;
-    bus_cfg.pin_d11 = -1;
+    bus_cfg.pin_d0 = GPIO_NUM_40; // lsb of the right most byte of the three bytes
+    bus_cfg.pin_d1 = GPIO_NUM_38;
+    bus_cfg.pin_d2 = GPIO_NUM_37;
+    bus_cfg.pin_d3 = GPIO_NUM_35;
+    bus_cfg.pin_d4 = GPIO_NUM_36;
+    bus_cfg.pin_d5 = GPIO_NUM_34; // blue
+    bus_cfg.pin_d6 = GPIO_NUM_33;
+    bus_cfg.pin_d7 = GPIO_NUM_18;
+    bus_cfg.pin_d8 = GPIO_NUM_21; // start of second byte
+    bus_cfg.pin_d9 = GPIO_NUM_17;
+    bus_cfg.pin_d10 = GPIO_NUM_18;
+    bus_cfg.pin_d11 = GPIO_NUM_16;
     bus_cfg.pin_d12 = -1;
     bus_cfg.pin_d13 = -1;
     bus_cfg.pin_d14 = -1;  
     bus_cfg.pin_d15 = -1; // end of byte 2
-    bus_cfg.pin_d16 = -1; // start of third byte
-    bus_cfg.pin_d17 = GPIO_NUM_36;
+    bus_cfg.pin_d16 = GPIO_NUM_8; // start of third byte
+    bus_cfg.pin_d17 = GPIO_NUM_7;
     bus_cfg.pin_d18 = -1;
     bus_cfg.pin_d19 = -1;
     bus_cfg.pin_d20 = -1;      
     bus_cfg.pin_d21 = -1;        
     bus_cfg.pin_d22 = -1;          
-    bus_cfg.pin_d23 = GPIO_NUM_35;  // end of third byte
+    bus_cfg.pin_d23 = -1;  // end of third byte
 
-    i2s_lcd_setup_v2(bus_cfg);
-    dma_allocate_v3(bus_cfg);
-    mbi_prepare_data();
+    printf("Configuring I2S LCD mode.\n");
+    i2s_lcd_setup(bus_cfg);
 
-    dma_start_v2();
+    printf("Allocating DMA memory.\n");    
+    size_t bytes_required = DMA_PAYLOAD_BITLENGTH * 3; // 3 bytes (24bits) per data output clock
+    dma_allocate_memory(bytes_required);
+
+    printf("Loading 24 bits at once payload.\n");   
+    for (int j = 0; j < DMA_PAYLOAD_BITLENGTH; ++j) {
+        uint8_t* bytes = &parallel_out_buffer[j * 3];
+        uint8_t* byte1 = &bytes[0];
+        uint8_t* byte2 = &bytes[1];
+        uint8_t* byte3 = &bytes[2];
+
+        for (int i = 1; i <= 23; ++i) {
+            if (i <= 7) {
+                *byte1 = toggle_bit(*byte1, i);  // Toggle bit in the first byte
+            } else if (i <= 15) {
+                *byte2 = toggle_bit(*byte2, i - 8);  // Toggle bit in the second byte
+            } else {
+                *byte3 = toggle_bit(*byte3, i - 16);  // Toggle bit in the third byte
+            }
+
+            if (i % 2 == 0) {
+                *byte1 |= 1;  // Set bit 0 high for every second iteration
+            } else {
+                *byte1 &= ~1; // Ensure bit 0 is low for other iterations
+            }
+        }
+
+             Cache_WriteBack_Addr((uint32_t) bytes, 3);    
+
+    } // end bit waterfall
+
+    /*
+        The above code should generate and load this sequence of bits being flipped into the buffer. 
+        This sequence should then be in the output.
+
+        000000000000000000000010
+        000000000000000000000111
+        000000000000000000001110
+        000000000000000000011111
+        000000000000000000111110
+        000000000000000001111111
+        000000000000000011111110
+        000000000000000111111111
+        000000000000001111111110
+        000000000000011111111111
+        000000000000111111111110
+        000000000001111111111111
+        000000000011111111111110
+        000000000111111111111111
+        000000001111111111111110
+        000000011111111111111111
+        000000111111111111111110
+        000001111111111111111111
+        000011111111111111111110
+        000111111111111111111111
+        001111111111111111111110
+        011111111111111111111111
+        111111111111111111111110
+        000000000000000000000010
+        000000000000000000000111
+        000000000000000000001110
+        000000000000000000011111
+        000000000000000000111110
+        000000000000000001111111
+        000000000000000011111110
+        000000000000000111111111
+        000000000000001111111110
+        000000000000011111111111
+        000000000000111111111110
+        000000000001111111111111
+        000000000011111111111110
+        000000000111111111111111
+        000000001111111111111110
+        000000011111111111111111
+        000000111111111111111110
+        000001111111111111111111
+        000011111111111111111110
+        000111111111111111111111
+        001111111111111111111110
+        011111111111111111111111
+        111111111111111111111110        
+
+    */    
+
+
+    printf("Commence circular loop of output.\n");   
+    dma_start_output();
 
 }
