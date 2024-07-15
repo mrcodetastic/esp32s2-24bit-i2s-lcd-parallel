@@ -1,4 +1,6 @@
 {
     "idf.adapterTargetName": "esp32s2",
-    "cmake.configureOnOpen": true
+    "cmake.configureOnOpen": true,
+    "idf.portWin": "COM5",
+    "idf.flashType": "UART"
 }

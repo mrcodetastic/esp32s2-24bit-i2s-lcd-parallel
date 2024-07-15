@@ -13,8 +13,16 @@ So there's the risk of stuff you write to PSRAM not actually being written as it
 
 Extensive use of `Cache_WriteBack_Addr` resolves for this when doing PSRAM write functions.
 
+When using PSRAM on the ESP32-S2 Mini, output clock rate seems to hit a limit at only 1Mhz! After this it is likely the DMA transfer will fail, probably due to the fact the PSRAM is very low throughput.
+
 ## Example output as seen in pulseview
 
-This is just a screen capture of the lower 3  in the data that's loaded into PSRAM. Example data only. Look at the code to understand.
+Using an 8 channel logic level analyser of bits d0-d6, d15 and d23 (the msb).
 
-![image](https://github.com/mrcodetastic/esp32s2-24bit-i2s-lcd-parallel/assets/12006953/913ec09f-2ab9-459d-93c9-f073dd3fd5a4)
+![image](pulseview.jpg)
+
+## Disabling PSRAM use
+Comment out the following define line in esp32s2_i2s_lcd_24bit_parallel_dma.hpp to simply use the normal internal (and limited) SRAM. You will then be able to use MUCH faster output clock speeds.
+```
+#define USE_REAL_SLOW_PSRAM 1
+```

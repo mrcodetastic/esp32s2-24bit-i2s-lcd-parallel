@@ -245,11 +245,18 @@ static const char *TAG = "edma_lcd_test";
       size_t alloc_size  = payload_size_bytes; // Must be multiples of 3bytes if 24bit output.
       size_t actual_size = 0;
       
-      // Forced to used PSRAM.
-      // Use heap_caps_malloc() internal + DMA to use SRAM and comment out the Cache_WriteBack_Addr stuff if you don't 
-      // want to use PSRAM
-      esp_err_t err = esp_dma_malloc(alloc_size, ESP_DMA_MALLOC_FLAG_PSRAM, (void **) &parallel_out_buffer, &actual_size);
-      assert(err == ESP_OK);
+     #ifdef USE_REAL_SLOW_PSRAM
+                ESP_LOGI(TAG, "Allocating PSRAM DMA memory for global_buffer_gclk_cdata.");  
+                esp_err_t err = esp_dma_malloc(alloc_size, ESP_DMA_MALLOC_FLAG_PSRAM, (void **) &parallel_out_buffer, &actual_size);
+                assert(err == ESP_OK);
+      #else
+                ESP_LOGI(TAG, "Allocating internal SRAM DMA memory for global_buffer_gclk_cdata.");  
+                parallel_out_buffer = static_cast<DMA_DATA_TYPE *>(heap_caps_malloc(alloc_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+                assert(parallel_out_buffer != nullptr);
+      #endif
+
+
+
 
       size_t alignment_offset = actual_size - alloc_size;      
 
@@ -262,7 +269,10 @@ static const char *TAG = "edma_lcd_test";
 
       // Zero out
       memset(parallel_out_buffer, 0b00000000, alloc_size); // zero it.      
+
+#ifdef USE_REAL_SLOW_PSRAM      
       Cache_WriteBack_Addr((uint32_t) parallel_out_buffer, alloc_size);   
+#endif      
 
       // dma ll desc
       int dma_node_cnt = ll_desc_get_required_num(alloc_size); // Number of DMA nodes  8000 / 4092

@@ -20,8 +20,12 @@
 
 // The type used for this SoC
 #define HUB75_DMA_DESCRIPTOR_T lldesc_t
-
 #define DMA_DATA_TYPE uint8_t
+
+//----------------------------------------------------------------------------
+
+// Do we want to use PSRAM or not?
+#define USE_REAL_SLOW_PSRAM 1
 
 //----------------------------------------------------------------------------
 
