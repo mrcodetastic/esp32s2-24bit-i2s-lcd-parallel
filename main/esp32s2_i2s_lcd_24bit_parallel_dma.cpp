@@ -189,10 +189,17 @@ static const char *TAG = "edma_lcd_test";
 
       // Configure the clock
       dev->clkm_conf.val = 0;
-      dev->clkm_conf.clkm_div_num = 40; // 4mhz
-      //dev->clkm_conf.clkm_div_num = 20; // 8mhz
+
+#ifdef USE_REAL_SLOW_PSRAM      
+      // Any lower clock divider (that is, faster I2S bus) when using PSRAM, will likely cause failure.
+      dev->clkm_conf.clkm_div_num = 30; // 1.3mhz (160Mhz/30/4 byte cycles required per clock)
+#else      
+      dev->clkm_conf.clkm_div_num = 5; // 8mhz (160/5/4)
+#endif      
       ESP_LOGI(TAG, "Clock divider is: %d", (dev->clkm_conf.clkm_div_num));
 
+      float parallel_output_hz = (160 / dev->clkm_conf.clkm_div_num / i2s_parallel_get_memory_width(ESP32_I2S_DEVICE, bus_width));         
+      ESP_LOGI(TAG, "Actual output clock frequency is: %.2f Mhz", parallel_output_hz);
 
       dev->clkm_conf.clkm_div_b = 0;
       dev->clkm_conf.clkm_div_a = 63;
@@ -243,25 +250,24 @@ static const char *TAG = "edma_lcd_test";
   esp_err_t dma_allocate_memory(size_t payload_size_bytes)
   {
       size_t alloc_size  = payload_size_bytes; // Must be multiples of 3bytes if 24bit output.
-      size_t actual_size = 0;
       
      #ifdef USE_REAL_SLOW_PSRAM
+
+                size_t actual_size = 0;
+
                 ESP_LOGI(TAG, "Allocating PSRAM DMA memory for global_buffer_gclk_cdata.");  
                 esp_err_t err = esp_dma_malloc(alloc_size, ESP_DMA_MALLOC_FLAG_PSRAM, (void **) &parallel_out_buffer, &actual_size);
                 assert(err == ESP_OK);
+
+                size_t alignment_offset = actual_size - alloc_size;      
+
+                ESP_LOGI(TAG, "Actual size is: %d bytes", actual_size);  
+                ESP_LOGI(TAG, "Alignment offset is: %d ", alignment_offset);                    
       #else
                 ESP_LOGI(TAG, "Allocating internal SRAM DMA memory for global_buffer_gclk_cdata.");  
                 parallel_out_buffer = static_cast<DMA_DATA_TYPE *>(heap_caps_malloc(alloc_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
                 assert(parallel_out_buffer != nullptr);
       #endif
-
-
-
-
-      size_t alignment_offset = actual_size - alloc_size;      
-
-      ESP_LOGI(TAG, "Actual size is: %d bytes", actual_size);  
-      ESP_LOGI(TAG, "Alignment offset is: %d ", alignment_offset);        
 
       if (parallel_out_buffer == NULL)  {
               ESP_LOGE(TAG, "DMA data buffer malloc failed.");
