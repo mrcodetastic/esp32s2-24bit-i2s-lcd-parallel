@@ -190,11 +190,18 @@ static const char *TAG = "edma_lcd_test";
       // Configure the clock
       dev->clkm_conf.val = 0;
 
+      // Configure sampling rate
+      //dev->sample_rate_conf.tx_bck_div_num = 40000000 / 2000000; // Fws = Fbck / 2
+      dev->sample_rate_conf.tx_bck_div_num = 2;
+      dev->sample_rate_conf.rx_bck_div_num = 2;      
+      dev->sample_rate_conf.tx_bits_mod = _cfg.parallel_width;
+
 #ifdef USE_REAL_SLOW_PSRAM      
       // Any lower clock divider (that is, faster I2S bus) when using PSRAM, will likely cause failure.
       dev->clkm_conf.clkm_div_num = 30; // 1.3mhz (160Mhz/30/4 byte cycles required per clock)
 #else      
-      dev->clkm_conf.clkm_div_num = 5; // 8mhz (160/5/4)
+      //dev->clkm_conf.clkm_div_num = 5; // 8mhz (160/5/2*2) // 160 pll clock / 5 / (tx_bck_div_num*2)
+      dev->clkm_conf.clkm_div_num = 2;   // 20mhz (160/5/2*2) // 160 pll clock / 2 / (tx_bck_div_num*2)
 #endif      
       ESP_LOGI(TAG, "Clock divider is: %d", (dev->clkm_conf.clkm_div_num));
 
@@ -206,10 +213,6 @@ static const char *TAG = "edma_lcd_test";
       dev->clkm_conf.clk_sel = 2;
       dev->clkm_conf.clk_en = 1;
 
-      // Configure sampling rate
-      //dev->sample_rate_conf.tx_bck_div_num = 40000000 / 2000000; // Fws = Fbck / 2
-      dev->sample_rate_conf.tx_bck_div_num = 2;
-      dev->sample_rate_conf.tx_bits_mod = _cfg.parallel_width;
 
       dev->timing.val = 0;
 
